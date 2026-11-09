@@ -1,0 +1,12 @@
+{
+  "name": "大樂透統計",
+  "short_name": "大樂透統計",
+  "start_url": "./#/predict",
+  "display": "standalone",
+  "background_color": "#f3f4f6",
+  "theme_color": "#2a78d6",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

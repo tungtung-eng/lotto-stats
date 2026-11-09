@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="大樂透統計">
+<meta name="theme-color" content="#2a78d6">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>大樂透統計</title>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f3f4f6; --card:#fcfcfb; --ink:#0b0b0b; --sub:#52514e; --muted:#8a8984; --line:#e2e2df;
+  --main:#2a78d6; --main2:#e6effb; --s2:#eb6834; --s2bg:#fdece4;
+  --ok:#1f8a4c; --okbg:#e5f5ec; --ng:#c0392b; --ngbg:#fbe9e7; --warn:#a86a00; --warnbg:#fdf3e1;
+  --q1:#cde2fb; --q2:#9ec5f4; --q3:#6da7ec; --q4:#2a78d6; --q5:#184f95;
+  --ref:#8a8984;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#111111; --card:#1a1a19; --ink:#f0efec; --sub:#c3c2b7; --muted:#8f8e86; --line:#2e2e2c;
+    --main:#3987e5; --main2:#1b2a3d; --s2:#d95926; --s2bg:#3a2216;
+    --ok:#5fd18f; --okbg:#173326; --ng:#ff8a7a; --ngbg:#3a1e1b; --warn:#f0b75a; --warnbg:#382b14;
+    --q1:#1c2c40; --q2:#104281; --q3:#1c5cab; --q4:#3987e5; --q5:#86b6ef;
+    --ref:#8f8e86;
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+nav,.btn,.tab,.cell{-webkit-user-select:none;user-select:none}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font:17px/1.6 -apple-system,"PingFang TC","Microsoft JhengHei",sans-serif}
+body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+main{max-width:720px;margin:0 auto;padding:calc(10px + env(safe-area-inset-top)) 16px 16px}
+h1{font-size:22px;margin:8px 0 10px} h2{font-size:18px;margin:20px 0 8px} h3{font-size:16px;margin:10px 0 4px}
+p{margin:6px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:10px 0}
+.sub{color:var(--sub);font-size:.86em}
+.muted{color:var(--muted);font-size:.8em}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.btn{display:inline-block;border:0;border-radius:12px;padding:10px 16px;font:inherit;font-weight:600;
+  background:var(--main);color:#fff;cursor:pointer;text-decoration:none}
+.btn.ghost{background:var(--main2);color:var(--main)}
+.btn.small{padding:5px 12px;font-size:14px;border-radius:10px}
+.pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;font-weight:600;background:var(--main2);color:var(--main)}
+.pill.ok{background:var(--okbg);color:var(--ok)} .pill.ng{background:var(--ngbg);color:var(--ng)} .pill.warn{background:var(--warnbg);color:var(--warn)}
+.note{background:var(--warnbg);color:var(--ink);border-radius:12px;padding:10px 14px;font-size:.9em;margin:10px 0}
+.note b{color:var(--warn)}
+/* 號碼球 */
+.balls{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.ball{width:34px;height:34px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:16px;background:var(--main);color:#fff;flex:none}
+.ball.sp{background:var(--s2)}
+.ball.off{background:var(--card);color:var(--sub);border:2px solid var(--line)}
+.ball.hit{box-shadow:0 0 0 3px var(--card),0 0 0 5px var(--ok)}
+.ball.sm{width:28px;height:28px;font-size:13px}
+.plus{color:var(--muted);font-weight:700}
+/* 分頁 */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.tab{border:1px solid var(--line);background:var(--card);color:var(--sub);border-radius:99px;padding:4px 12px;font:inherit;font-size:14px;cursor:pointer}
+.tab.on{background:var(--main);border-color:var(--main);color:#fff}
+/* 號碼格 */
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cell{aspect-ratio:1;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-weight:700;cursor:pointer;border:2px solid transparent;line-height:1.1;font-size:16px}
+.cell small{font-weight:500;font-size:11px;opacity:.85}
+.cell.sel{border-color:var(--s2)}
+.cell.pick{background:var(--main);color:#fff}
+.cell.blank{background:var(--card);border:1px solid var(--line)}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:13px;color:var(--sub);margin:6px 0}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+/* 橫條圖 */
+.hb{display:grid;grid-template-columns:auto 1fr auto;gap:4px 8px;align-items:center;font-size:14px}
+.hb .lab{color:var(--sub);white-space:nowrap}
+.hb .val{color:var(--ink);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.hb .tr{position:relative;height:14px}
+.hb .tr i{position:absolute;left:0;top:1px;height:12px;border-radius:0 4px 4px 0;background:var(--main)}
+.hb .tr i.b{background:var(--s2);top:8px;height:6px}
+.hb .tr i.a{height:6px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+th:first-child,td:first-child{text-align:left;white-space:normal}
+th{color:var(--sub);font-weight:600}
+.scroll{overflow-x:auto}
+svg text{fill:var(--sub);font-size:11px}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--card);font-size:13px;padding:5px 9px;border-radius:8px;
+  z-index:20;display:none;white-space:nowrap}
+select{font:inherit;padding:6px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);max-width:100%}
+details summary{cursor:pointer;color:var(--main);font-weight:600}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);display:flex;
+  padding-bottom:env(safe-area-inset-bottom);z-index:10}
+nav a{flex:1;text-align:center;padding:8px 0 6px;color:var(--sub);text-decoration:none;font-size:12px;line-height:1.2}
+nav a b{display:block;font-size:20px;line-height:1.3}
+nav a.on{color:var(--main);font-weight:700}
+</style>
+</head>
+<body>
+<main id="app"><p class="sub">載入中…</p></main>
+<div class="tip" id="tip"></div>
+<nav>
+  <a href="#/predict" data-r="predict"><b>🔮</b>預測</a>
+  <a href="#/stats" data-r="stats"><b>📊</b>統計</a>
+  <a href="#/score" data-r="score"><b>🏁</b>成績</a>
+  <a href="#/fair" data-r="fair"><b>⚖️</b>檢定</a>
+  <a href="#/check" data-r="check"><b>🎫</b>對獎</a>
+</nav>
+<script src="app.js"></script>
+<script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');</script>
+</body>
+</html>
