@@ -1,7 +1,7 @@
 /* 離線可用：程式和開獎資料「先上網抓最新的」，3 秒抓不到才用手機裡的備份 */
-const VER = 'lotto-1';
+const VER = 'lotto-2';
 const FILES = ['./', 'index.html', 'app.js', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png',
-  'data/draws.json', 'data/analysis.json', 'data/live.json'];
+  'data/draws.json', 'data/analysis.json', 'data/live.json', 'data/ranks.json'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VER).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });

@@ -158,10 +158,17 @@ def make_fns():
     return {"hot": m_hot, "cold": m_cold, "bayes": m_bayes, "markov": m_markov, "gbm": GBM(), "nn": NN()}
 
 
+JITTER = np.random.default_rng(SEED).random(N) * 1e-9   # 分數相同時，用固定的亂數打破平手（不偏小號或大號）
+TOP = 12                                                 # 包牌最多選 12 個號碼
+
+
+def ranking(score, n=TOP):
+    """分數由高到低的前 n 個號碼（照名次排）"""
+    return (np.argsort(-(score + JITTER))[:n] + 1).tolist()
+
+
 def pick(score):
-    # 分數相同時，用固定的亂數打破平手（不偏小號或大號）
-    jitter = np.random.default_rng(SEED).random(N) * 1e-9
-    return sorted((np.argsort(-(score + jitter))[:K] + 1).tolist())
+    return sorted(ranking(score, K))
 
 
 def vote(scores):
@@ -194,6 +201,27 @@ def grade(nums, t):
         w = draws[t].get("w") or []
         money = w[tr] if tr < len(w) else 0
     return h, sp, tr, money
+
+
+def wheel(nums, t):
+    """包牌（複式）：nums 裡任選 6 個的所有組合都買，算總獎金。回傳 {cost, money}"""
+    real = set(draws[t]["n"])
+    n = len(nums)
+    h = len(real & set(nums))
+    sp = 1 if draws[t]["s"] in nums else 0
+    w = draws[t].get("w") or []
+    money = 0
+    for k in range(0, min(h, K) + 1):
+        # 不含特別號的組合：k 個中的號碼 + 其他從「沒中也不是特別號」的號碼裡挑
+        for with_sp in (0, 1):
+            if with_sp and not sp:
+                continue
+            others = n - h - sp
+            cnt = math.comb(h, k) * math.comb(others, K - k - with_sp)
+            tr = tier(k, bool(with_sp))
+            if cnt and tr is not None and tr < len(w):
+                money += cnt * w[tr]
+    return {"cost": math.comb(n, K) * TICKET, "money": int(money)}
 
 
 # ---------------------------------------------------------------- 理論值
@@ -260,17 +288,23 @@ def backtest():
     rec = {k: [] for k, _, _ in MODELS}
     rec["random"] = []
     rng = np.random.default_rng(SEED)
+    rng_top = np.random.default_rng(SEED + 1)
     last_picks = {}
+    ranks = {k: [] for k in rec}       # 每期各模型前 12 名，給網頁算包牌
     for t in range(BT_START, T):
         scores = {k: fns[k](t) for k in fns}
         scores["vote"] = vote(scores)
         for k in rec:
+            ranks[k].append((rng_top.permutation(N)[:TOP] + 1).tolist() if k == "random" else ranking(scores[k]))
             nums = sorted((rng.choice(N, K, replace=False) + 1).tolist()) if k == "random" else pick(scores[k])
             rec[k].append(grade(nums, t))
             if t == T - 1:
                 last_picks[k] = nums
         if (t - BT_START) % 200 == 0:
             print("  回測", t, "/", T)
+    (DATA / "ranks.json").write_text(json.dumps({
+        "from": BT_START, "periods": [d["p"] for d in draws[BT_START:]], "m": ranks,
+    }, separators=(",", ":")), "utf-8")
     return {k: evaluate(v) for k, v in rec.items()}, last_picks
 
 
@@ -295,7 +329,7 @@ def predict_next():
         nums = pick(sc)
         # 特別號參考：剩下 43 個裡分數最高的
         rest = [i for i in np.argsort(-sc) if i + 1 not in nums]
-        out[k] = {"n": nums, "s": int(rest[0] + 1)}
+        out[k] = {"n": nums, "s": int(rest[0] + 1), "top": ranking(sc)}
     return out
 
 
@@ -305,12 +339,18 @@ def update_live(pred, period, date):
     key = str(period)
     if key not in live["preds"]:        # 開獎前就固定，之後不改
         live["preds"][key] = {"date": date, "made": datetime.datetime.now().isoformat(timespec="minutes"),
-                              "picks": {k: v["n"] for k, v in pred.items()}}
+                              "picks": {k: v["n"] for k, v in pred.items()},
+                              "tops": {k: v["top"] for k, v in pred.items()}}
+    elif "tops" not in live["preds"][key] and "result" not in live["preds"][key]:
+        # 包牌功能上線前就存的那一期：還沒開獎、用的是同一份資料，補上前 12 名
+        live["preds"][key]["tops"] = {k: v["top"] for k, v in pred.items()}
     idx = {d["p"]: i for i, d in enumerate(draws)}
     for p, e in live["preds"].items():
         t = idx.get(int(p))
         if t is not None and "result" not in e:
             e["result"] = {k: dict(zip(["hits", "sp", "tier", "money"], grade(v, t))) for k, v in e["picks"].items()}
+            if "tops" in e:
+                e["wheel10"] = {k: wheel(v[:10], t) for k, v in e["tops"].items()}
     path.write_text(json.dumps(live, ensure_ascii=False, indent=1), "utf-8")
     return live
 

@@ -4,9 +4,9 @@ const $ = s => document.querySelector(s);
 const app = $('#app');
 const tip = $('#tip');
 let D = null, A = null, L = null;     // draws / analysis / live
-const st = { range: 100, model: 'vote', cell: null, pick: [], period: null };
+const st = { range: 100, model: 'vote', cell: null, pick: [], period: null, wn: 10, wm: 'vote' };
 try { Object.assign(st, JSON.parse(localStorage.getItem('lotto-st') || '{}')); } catch (e) {}
-const save = () => { try { localStorage.setItem('lotto-st', JSON.stringify({ range: st.range, model: st.model, pick: st.pick })); } catch (e) {} };
+const save = () => { try { localStorage.setItem('lotto-st', JSON.stringify({ range: st.range, model: st.model, pick: st.pick, wn: st.wn, wm: st.wm })); } catch (e) {} };
 
 const fmt = n => n.toLocaleString('zh-TW');
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -326,10 +326,190 @@ function gradeOne(pk, d) {
   return { h, sp, tr, m };
 }
 
+// ---------------------------------------------------------------- 🎰 包牌試算
+let RK = null;                       // ranks.json：回測期間每期各模型前 12 名
+const comb = (n, k) => { if (k < 0 || k > n) return 0; let r = 1; for (let i = 1; i <= k; i++) r = r * (n - k + i) / i; return Math.round(r); };
+const TIER = (k, sp) => k === 6 ? 0 : k === 5 ? (sp ? 1 : 2) : k === 4 ? (sp ? 3 : 4) : k === 3 ? (sp ? 5 : 7) : (k === 2 && sp ? 6 : null);
+
+// 包牌一期：nums 裡任選 6 個的組合全買，回傳 { cost, money, tiers[8]（各獎項中幾注）, h, sp }
+function wheelOne(nums, d) {
+  const n = nums.length, h = nums.filter(v => d.n.includes(v)).length, sp = nums.includes(d.s) ? 1 : 0;
+  const tiers = Array(8).fill(0); let money = 0;
+  for (let k = 0; k <= Math.min(h, 6); k++) for (const ws of [0, 1]) {
+    if (ws && !sp) continue;
+    const cnt = comb(h, k) * comb(n - h - sp, 6 - k - ws), tr = TIER(k, !!ws);
+    if (cnt && tr != null) { tiers[tr] += cnt; money += cnt * ((d.w && d.w[tr]) || 0); }
+  }
+  return { cost: comb(n, 6) * 50, money, tiers, h, sp };
+}
+
+function wheelRun(model, n) {
+  const ps = RK.periods, list = RK.m[model], idx = new Map(D.map((d, i) => [d.p, i]));
+  const rows = [], tiers = Array(8).fill(0);
+  let cost = 0, money = 0, wins = 0, any = 0, streak = 0, maxStreak = 0, best = null;
+  const half = Math.floor(ps.length / 2), hc = [0, 0], hm = [0, 0];
+  ps.forEach((p, i) => {
+    const d = D[idx.get(p)], r = wheelOne(list[i].slice(0, n), d);
+    cost += r.cost; money += r.money; r.tiers.forEach((c, j) => tiers[j] += c);
+    if (r.money > 0) any++;
+    if (r.money >= r.cost) { wins++; streak = 0; } else { streak++; maxStreak = Math.max(maxStreak, streak); }
+    if (!best || r.money > best.money) best = { p, d: d.d, money: r.money, h: r.h, sp: r.sp };
+    const s = i < half ? 0 : 1; hc[s] += r.cost; hm[s] += r.money;
+    rows.push({ p, d: d.d, ...r });
+  });
+  return { n: ps.length, cost, money, wins, any, maxStreak, best, tiers, rows, rate: money / cost, half: [hm[0] / hc[0], hm[1] / hc[1]] };
+}
+
+function vWheel() {
+  if (!RK) {
+    app.innerHTML = '<h1>包牌試算</h1><p class="sub">載入回測資料中…</p>';
+    fetch('data/ranks.json?v=' + Date.now()).then(r => r.json()).then(j => { RK = j; if (curRoute() === 'wheel') vWheel(); })
+      .catch(e => { app.innerHTML = `<p>回測資料載入失敗：${esc(e.message)}</p>`; });
+    return;
+  }
+  const n = st.wn || 10;
+  const ids = A.models.map(m => m.id);
+  const all = {}; [...ids, 'random'].forEach(k => { all[k] = wheelRun(k, n); });
+  const champ = ids.reduce((a, b) => all[b].rate > all[a].rate ? b : a);
+  const mid = st.wm === 'best' ? champ : (st.wm || 'vote');
+  const R = all[mid], RR = all.random;
+  const tickets = comb(n, 6), price = tickets * 50;
+  const top = A.next.picks[mid].top.slice(0, n);
+
+  // 前後半段名次（照回收率，7 個模型比）
+  const rankBy = s => { const o = [...ids].sort((a, b) => all[b].half[s] - all[a].half[s]); return Object.fromEntries(o.map((k, i) => [k, i + 1])); };
+  const r1 = rankBy(0), r2 = rankBy(1);
+  const c1 = ids.find(k => r1[k] === 1);
+  const passed = r2[mid] <= 2 && r1[mid] <= 2;
+  const halfMid = RK.periods[Math.floor(RK.periods.length / 2)];
+  const dOf = p => D.find(d => d.p === p).d.slice(0, 7);
+  const short = k => modelName(k).replace(/（.*）/, '');
+  const rankNo = k => ids.filter(x => all[x].rate > all[k].rate).length + 1;
+
+  let h = `<h1>包牌試算</h1>
+  <div class="card">
+    <div class="row"><span class="grow">號碼數</span><b id="wnv" style="font-size:20px">${n} 個</b></div>
+    <input type="range" id="wn" min="6" max="12" value="${n}" style="width:100%;accent-color:var(--main)">
+    <div class="row" style="margin-top:8px"><span class="grow">照哪個模型的排名</span>
+      <select id="wm"><option value="best" ${st.wm === 'best' ? 'selected' : ''}>目前冠軍（${short(champ)}）</option>
+      ${A.models.map(m => `<option value="${m.id}" ${st.wm !== 'best' && mid === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}</select></div>
+    <p class="muted">特別號不用另外選：大樂透的特別號是開獎時另外開，用你包的號碼自動對。</p>
+  </div>
+
+  <h2>${roc(A.next.p)} 包牌號碼　<span class="sub">${A.next.d}</span></h2>
+  <div class="card">${balls([...top].sort((a, b) => a - b))}
+    <p style="margin-top:8px">${n} 個號碼任選 6 個＝<b>${fmt(tickets)} 注</b>，費用 <b>${fmt(price)} 元</b></p>
+    <p class="muted">這是「${modelName(mid)}」排名前 ${n} 的號碼。「機率最高」其實是模型的排名，每個號碼真正的機率都是 6/49。</p></div>
+
+  <h2>回測：${A.bt.from.slice(0, 4)} 年起每期都這樣包</h2>
+  <p class="sub">從 ${A.bt.from} 到 ${A.bt.to}，共 ${fmt(R.n)} 期，每期都只用「當時」的模型排名前 ${n} 名包牌。</p>
+  <div class="card">
+    <div class="row"><span class="grow">勝率（當期拿回 ≥ 當期花費）</span><b style="font-size:22px">${pct(R.wins / R.n)}</b></div>
+    <div class="sub">${fmt(R.n)} 期裡有 ${R.wins} 期有賺；有中任何獎的期數 ${R.any} 期（${pct(R.any / R.n, 0)}）</div>
+    <table style="margin-top:8px">
+      <tr><th></th><th>${short(mid)}</th><th>亂選對照</th></tr>
+      <tr><td>總投入</td><td>${fmt(R.cost)}</td><td>${fmt(RR.cost)}</td></tr>
+      <tr><td>總拿回</td><td>${fmt(R.money)}</td><td>${fmt(RR.money)}</td></tr>
+      <tr><td>輸贏</td><td>${fmt(R.money - R.cost)}</td><td>${fmt(RR.money - RR.cost)}</td></tr>
+      <tr><td>回收率</td><td><b>${pct(R.rate)}</b></td><td>${pct(RR.rate)}</td></tr>
+      <tr><td>勝率</td><td>${pct(R.wins / R.n)}</td><td>${pct(RR.wins / RR.n)}</td></tr>
+      <tr><td>最長連續沒回本</td><td>${R.maxStreak} 期</td><td>${RR.maxStreak} 期</td></tr>
+    </table>
+    <p class="sub" style="margin-top:8px">最好的一期：${roc(R.best.p)}（${R.best.d}），包中 ${R.best.h} 個${R.best.sp ? '＋特別號' : ''}，拿回 ${fmt(R.best.money)} 元。</p>
+    <p class="muted">獎金用當期真實獎金。頭獎、貳獎若當期沒人中，用累積獎金估；若有人中，實際上你會跟他們平分，這裡沒有扣，所以結果略為樂觀。</p>
+  </div>
+  <div class="card"><h3>累積輸贏</h3>
+    <div class="legend"><span><i style="background:var(--main)"></i>${short(mid)}</span><span><i style="background:var(--s2)"></i>亂選對照</span></div>
+    <div id="cum"></div><p class="muted">線一路往下就是一路在賠錢。兩條線差不多，代表模型選號跟亂選沒有差別。點線看數字。</p></div>
+  <div class="card"><h3>回測期間各獎項累計中幾注</h3>
+    ${hbars(A.tier_names.map((t, i) => ({ lab: t, v: R.tiers[i], val: fmt(R.tiers[i]) + ' 注', tip: `${t}：${fmt(R.tiers[i])} 注（亂選對照 ${fmt(RR.tiers[i])} 注）` })).filter(r => r.v > 0))}</div>
+
+  <h2>排行榜（每期包 ${n} 個號碼）</h2>
+  <div class="card scroll"><table>
+    <tr><th>模型</th><th>回收率</th><th>勝率</th><th>輸贏</th></tr>
+    ${[...ids, 'random'].sort((a, b) => all[b].rate - all[a].rate).map(k => `<tr><td>${k === 'random' ? '' : rankNo(k) + '. '}${short(k)}${k === mid ? ' ◀' : ''}</td><td>${pct(all[k].rate)}</td><td>${pct(all[k].wins / all[k].n)}</td><td>${fmt(all[k].money - all[k].cost)}</td></tr>`).join('')}
+  </table><p class="muted">◀ 是你目前選的模型。輸贏單位：元。</p>${champNote(all[champ], champ)}</div>
+
+  <div class="card"><h3>考試：冠軍是真厲害還是運氣好？</h3>
+    <p class="sub">把回測切成兩半：前半段（${dOf(RK.periods[0])} 起）、後半段（${dOf(halfMid)} 起），照回收率排名。真的厲害的模型，兩段都應該名列前茅。</p>
+    <table><tr><th>模型</th><th>前半段</th><th>後半段</th></tr>
+    ${[...ids].sort((a, b) => r1[a] - r1[b]).map(k => `<tr><td>${short(k)}</td><td>第 ${r1[k]} 名</td><td>第 ${r2[k]} 名</td></tr>`).join('')}</table>
+    <p style="margin-top:8px"><b>前半段冠軍「${short(c1)}」到了後半段排第 ${r2[c1]} 名。</b></p>
+    <p class="sub">${r2[c1] <= 2 ? '這次冠軍有守住前兩名，但只考一次還不夠，要看上線後的真實戰績能不能繼續贏。' : '冠軍沒有守住，代表前半段的好成績比較像是運氣，不是真的學到規律。'}
+    你目前選的「${short(mid)}」：前半段第 ${r1[mid]} 名、後半段第 ${r2[mid]} 名，${passed ? '兩段都在前兩名。' : '沒有兩段都在前兩名。'}</p></div>
+
+  <div class="card"><h3>最近 10 期明細</h3>
+    ${R.rows.slice(-10).reverse().map(r => `<div style="margin:8px 0"><div class="row"><span class="grow muted">${roc(r.p)}　${r.d}</span>
+      <span class="pill ${r.money >= r.cost ? 'ok' : ''}">${r.money >= r.cost ? '賺 ' : '賠 '}${fmt(Math.abs(r.money - r.cost))}</span></div>
+      <div class="muted">包中 ${r.h} 個${r.sp ? '＋特別號' : ''}，花 ${fmt(r.cost)}、拿回 ${fmt(r.money)}</div></div>`).join('')}</div>
+  ${wheelLive()}`;
+  app.innerHTML = h;
+  $('#cum').innerHTML = cumChart(R.rows, RR.rows);
+  bindTips(app);
+  const wn = $('#wn');
+  wn.oninput = () => { $('#wnv').textContent = wn.value + ' 個'; };
+  wn.onchange = () => { st.wn = +wn.value; save(); vWheel(); };
+  $('#wm').onchange = e => { st.wm = e.target.value; save(); vWheel(); };
+}
+
+// 冠軍的成績是不是靠某一期大獎撐起來的
+function champNote(r, k) {
+  const b = r.best, rest = (r.money - b.money) / r.cost;
+  if (b.money < r.cost * 0.1) return '';
+  return `<p class="sub" style="margin-top:6px">⚠️ 冠軍「${modelName(k).replace(/（.*）/, '')}」的成績，主要來自 ${roc(b.p)}（${b.d}）那一期：包中 ${b.h} 個${b.sp ? '＋特別號' : ''}，一期拿回 ${fmt(b.money)} 元。扣掉這一期，回收率只有 ${pct(rest)}。一次大獎是運氣，不代表模型比較準。</p>`;
+}
+
+// 上線後包 10 個號碼的真實戰績
+function wheelLive() {
+  if (!L) return '';
+  const done = Object.entries(L.preds).filter(([, e]) => e.wheel10).sort((a, b) => b[0] - a[0]);
+  const h = `<h2>上線後真實戰績（包 10 個號碼）</h2>`;
+  if (!done.length) return h + `<div class="card sub">每期開獎前都會把各模型前 12 名存檔，開獎後自動算包 10 個號碼的輸贏。第一期開完就有。</div>`;
+  const sum = {};
+  done.forEach(([, e]) => Object.entries(e.wheel10).forEach(([k, r]) => {
+    const o = sum[k] || (sum[k] = { c: 0, m: 0, w: 0, n: 0 });
+    o.c += r.cost; o.m += r.money; o.n++; if (r.money >= r.cost) o.w++;
+  }));
+  return h + `<div class="card scroll"><table><tr><th>模型</th><th>期數</th><th>回收率</th><th>有賺期數</th></tr>
+    ${A.models.map(m => sum[m.id] ? `<tr><td>${m.name}</td><td>${sum[m.id].n}</td><td>${pct(sum[m.id].m / sum[m.id].c)}</td><td>${sum[m.id].w}</td></tr>` : '').join('')}</table></div>`;
+}
+
+function cumChart(a, b) {
+  const W = 360, H = 200, pl = 48, pr = 8, pt = 10, pb = 22;
+  const cum = rows => { let s = 0; return rows.map(r => (s += r.money - r.cost)); };
+  const ca = cum(a), cb = cum(b), all = [...ca, ...cb, 0];
+  const lo = Math.min(...all), hi = Math.max(...all);
+  const x = i => pl + i / (ca.length - 1) * (W - pl - pr), y = v => pt + (hi - v) / (hi - lo || 1) * (H - pt - pb);
+  const line = (arr, c) => `<polyline points="${arr.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round"/>`;
+  const wan = v => (v < 0 ? '-' : '') + Math.round(Math.abs(v) / 10000).toLocaleString('zh-TW') + '萬';
+  const ticks = [...new Set([lo, Math.round(lo / 2), 0, hi > Math.abs(lo) * 0.15 ? hi : 0])];
+  const id = 'cc' + Math.random().toString(36).slice(2, 7);
+  setTimeout(() => {
+    const svg = document.getElementById(id); if (!svg) return;
+    const cross = svg.querySelector('.cross');
+    const mv = e => {
+      const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * W;
+      const i = Math.max(0, Math.min(ca.length - 1, Math.round((px - pl) / (W - pl - pr) * (ca.length - 1))));
+      cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.style.display = '';
+      tip.textContent = `${a[i].d}　模型累積 ${wan(ca[i])}、亂選 ${wan(cb[i])}`; tip.style.display = 'block';
+      tip.style.left = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8) + 'px'; tip.style.top = (e.clientY - 40) + 'px';
+    };
+    svg.addEventListener('pointermove', mv); svg.addEventListener('pointerdown', mv);
+    svg.addEventListener('pointerleave', () => { tip.style.display = 'none'; cross.style.display = 'none'; });
+  });
+  return `<svg id="${id}" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;touch-action:pan-y">
+    ${ticks.map(t => `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)"/><text x="${pl - 4}" y="${y(t) + 4}" text-anchor="end">${t === 0 ? '0' : wan(t)}</text>`).join('')}
+    ${line(cb, 'var(--s2)')}${line(ca, 'var(--main)')}
+    <line class="cross" y1="${pt}" y2="${H - pb}" stroke="var(--sub)" style="display:none"/>
+    <text x="${pl}" y="${H - 5}">${a[0].d.slice(0, 4)}</text><text x="${W - pr}" y="${H - 5}" text-anchor="end">${a[a.length - 1].d.slice(0, 4)}</text>
+  </svg>`;
+}
+
 // ---------------------------------------------------------------- 路由
-const VIEWS = { predict: vPredict, stats: vStats, score: vScore, fair: vFair, check: vCheck };
+const VIEWS = { predict: vPredict, stats: vStats, wheel: vWheel, score: vScore, fair: vFair, check: vCheck };
+function curRoute() { return (location.hash.match(/#\/(\w+)/) || [])[1] || 'predict'; }
 function route() {
-  const r = (location.hash.match(/#\/(\w+)/) || [])[1] || 'predict';
+  const r = curRoute();
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.r === r));
   tip.style.display = 'none';
   (VIEWS[r] || vPredict)();
